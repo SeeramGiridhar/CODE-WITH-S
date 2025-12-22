@@ -27,12 +27,13 @@ import { HistoryItem, SupportedLanguage, Commit } from "../types";
 
 // Configuration using environment variables
 const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY,
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.FIREBASE_APP_ID
+  apiKey: "AIzaSyBtrD2J6YOTitVmOB7GWQCtlQfbvws5oqs",
+  authDomain: "code-with-s.firebaseapp.com",
+  projectId: "code-with-s",
+  storageBucket: "code-with-s.firebasestorage.app",
+  messagingSenderId: "1048520916484",
+  appId: "1:1048520916484:web:be585e811ea22462223f51",
+  measurementId: "G-LTEJY7WMN5"
 };
 
 let auth: any;
