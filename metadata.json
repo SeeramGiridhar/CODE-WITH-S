@@ -1,0 +1,5 @@
+{
+  "name": "CODE WITH S",
+  "description": "An intelligent, real-time coding playground that explains logic step-by-step, simulates output for multiple languages using Gemini, and provides smart suggestions.",
+  "requestFramePermissions": []
+}
