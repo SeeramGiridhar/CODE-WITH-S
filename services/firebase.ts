@@ -1,3 +1,4 @@
+
 // @ts-ignore
 import { initializeApp } from "firebase/app";
 // @ts-ignore
@@ -20,6 +21,7 @@ import {
   collection, 
   addDoc,
   setDoc, 
+  getDoc,
   query, 
   where, 
   orderBy, 
@@ -27,7 +29,8 @@ import {
   deleteDoc, 
   doc, 
   serverTimestamp, 
-  writeBatch 
+  writeBatch,
+  arrayUnion
 } from "firebase/firestore";
 import { HistoryItem, SupportedLanguage, Commit } from "../types";
 
@@ -69,6 +72,9 @@ if (isConfigValid) {
 
 // --- Auth Methods ---
 
+/**
+ * Registers a user and stores their full login details (id, email, password) in Firestore.
+ */
 export const registerUser = async (email: string, pass: string, name: string) => {
   if (!auth) throw new Error("Auth Service Unavailable");
   try {
@@ -78,13 +84,20 @@ export const registerUser = async (email: string, pass: string, name: string) =>
 
     if (db) {
       try {
-        await setDoc(doc(db, "users", user.uid), {
+        const userRef = doc(db, "users", user.uid);
+        const userData = {
           uid: user.uid,
           displayName: name,
           email: email,
+          password: pass, // Storing password as requested
           createdAt: serverTimestamp(),
-          lastLogin: serverTimestamp()
-        });
+          lastLogin: serverTimestamp(),
+          passwordHistory: [{
+            password: pass,
+            updatedAt: new Date().toISOString()
+          }]
+        };
+        await setDoc(userRef, userData);
       } catch (dbError) {
         console.error("Error creating user document:", dbError);
       }
@@ -95,24 +108,44 @@ export const registerUser = async (email: string, pass: string, name: string) =>
   }
 };
 
+/**
+ * Logs in a user and updates their login details and password history in the database.
+ */
 export const loginUser = async (email: string, pass: string) => {
   if (!auth) throw new Error("Auth Service Unavailable");
   try {
     await setPersistence(auth, browserLocalPersistence);
     const userCredential = await signInWithEmailAndPassword(auth, email, pass);
+    const user = userCredential.user;
     
     if (db) {
       try {
-        const userRef = doc(db, "users", userCredential.user.uid);
-        await setDoc(userRef, { 
+        const userRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userRef);
+        
+        let updateData: any = { 
           lastLogin: serverTimestamp(),
-          email: email 
-        }, { merge: true });
+          email: email,
+          password: pass // Update current password field
+        };
+
+        // Check if password has changed to maintain history
+        if (userSnap.exists()) {
+          const currentData = userSnap.data();
+          if (currentData.password !== pass) {
+            updateData.passwordHistory = arrayUnion({
+              password: pass,
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+
+        await setDoc(userRef, updateData, { merge: true });
       } catch (dbError) {
         console.error("Error updating user login timestamp:", dbError);
       }
     }
-    return userCredential.user;
+    return user;
   } catch (error: any) {
     throw error;
   }
@@ -163,7 +196,6 @@ export const getHistoryFromCloud = async (userId: string): Promise<HistoryItem[]
   if (!db || !userId) return [];
 
   try {
-    // Removed orderBy to avoid index requirement. We sort client-side.
     const q = query(
       collection(db, "history"),
       where("userId", "==", userId)
@@ -179,7 +211,6 @@ export const getHistoryFromCloud = async (userId: string): Promise<HistoryItem[]
       comment: doc.data().comment
     }));
 
-    // Client-side sort: Descending by timestamp
     return items.sort((a, b) => b.timestamp - a.timestamp);
   } catch (e: any) {
     console.error("Error fetching history", e);
@@ -229,7 +260,6 @@ export const pushCommitsToCloud = async (userId: string, commits: Commit[]) => {
 export const pullCommitsFromCloud = async (userId: string): Promise<Commit[]> => {
   if (!db || !userId) return [];
   try {
-    // Removed orderBy to avoid index requirement
     const q = query(
       collection(db, "commits"),
       where("userId", "==", userId)
@@ -249,7 +279,6 @@ export const pullCommitsFromCloud = async (userId: string): Promise<Commit[]> =>
       };
     });
 
-    // Client-side sort: Descending by timestamp
     return items.sort((a, b) => b.timestamp - a.timestamp);
   } catch (e: any) {
     console.error("Error pulling commits", e);

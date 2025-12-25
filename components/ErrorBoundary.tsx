@@ -1,5 +1,5 @@
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 import { Icons } from './Icon';
 
 interface Props {
@@ -14,7 +14,8 @@ interface State {
 /**
  * Error Boundary component to catch and handle runtime errors gracefully.
  */
-class ErrorBoundary extends Component<Props, State> {
+// Fix: Use React.Component to ensure props and setState are correctly inherited from the base React class
+class ErrorBoundary extends React.Component<Props, State> {
   public state: State = {
     hasError: false,
     error: null,
@@ -28,9 +29,10 @@ class ErrorBoundary extends Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
   }
 
+  // Fix: Explicitly defining handleReset to ensure setState is accessible on the class instance
   private handleReset = () => {
     // Attempt to clear corrupted state and restore the environment
-    // Fix: Using setState to update component state and trigger re-render
+    // Correctly call setState from the React.Component base class
     this.setState({ hasError: false, error: null });
     window.location.reload();
   };
@@ -68,7 +70,7 @@ class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    // Fix: Accessing the children property from props to render the application content
+    // Fix: Correctly access children through the props property of React.Component
     return this.props.children;
   }
 }
