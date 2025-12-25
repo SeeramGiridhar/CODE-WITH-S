@@ -17,8 +17,6 @@ import {
   GraduationCap,
   Wand2,
   MessageSquare,
-  Github,
-  Facebook,
   GitBranch,
   GitCommit,
   GitPullRequest,
@@ -30,7 +28,10 @@ import {
   Zap,
   Save,
   Check,
-  ExternalLink
+  ExternalLink,
+  Palette,
+  Download,
+  FolderOpen
 } from 'lucide-react';
 
 export const Icons = {
@@ -51,8 +52,6 @@ export const Icons = {
   Learn: GraduationCap,
   Format: Wand2,
   Comment: MessageSquare,
-  Github,
-  Facebook,
   GitBranch,
   GitCommit,
   GitPullRequest,
@@ -65,5 +64,8 @@ export const Icons = {
   Save,
   CheckSimple: Check,
   ExternalLink,
-  Wand2
+  Wand2,
+  Palette,
+  Download,
+  Open: FolderOpen
 };

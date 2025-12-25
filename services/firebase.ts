@@ -1,15 +1,10 @@
+// @ts-ignore
 import { initializeApp } from "firebase/app";
-import { 
-  getAuth, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  GithubAuthProvider,
-  FacebookAuthProvider,
-  signInAnonymously,
-  signOut,
-  onAuthStateChanged,
-  User
-} from "firebase/auth";
+// @ts-ignore
+import { getAnalytics } from "firebase/analytics";
+// @ts-ignore
+import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
+// @ts-ignore
 import { 
   getFirestore, 
   collection, 
@@ -17,82 +12,61 @@ import {
   query, 
   where, 
   orderBy, 
-  getDocs,
-  deleteDoc,
-  doc,
-  serverTimestamp,
-  writeBatch
+  getDocs, 
+  deleteDoc, 
+  doc, 
+  serverTimestamp, 
+  writeBatch 
 } from "firebase/firestore";
 import { HistoryItem, SupportedLanguage, Commit } from "../types";
 
-// Configuration using environment variables
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBtrD2J6YOTitVmOB7GWQCtlQfbvws5oqs",
-  authDomain: "code-with-s.firebaseapp.com",
-  projectId: "code-with-s",
-  storageBucket: "code-with-s.firebasestorage.app",
-  messagingSenderId: "1048520916484",
-  appId: "1:1048520916484:web:be585e811ea22462223f51",
-  measurementId: "G-LTEJY7WMN5"
+  apiKey: "AIzaSyC7ZPnOYEh8xDjH6dfQhnY4MI4yiXh2Oh0",
+  authDomain: "binary-hearts-fddfb.firebaseapp.com",
+  projectId: "binary-hearts-fddfb",
+  storageBucket: "binary-hearts-fddfb.firebasestorage.app",
+  messagingSenderId: "84640460496",
+  appId: "1:84640460496:web:19951bcd4fae0a45b838d5",
+  measurementId: "G-XCHFCWH1H8"
 };
 
 let auth: any;
 let db: any;
+let analytics: any;
 let googleProvider: any;
-let githubProvider: any;
-let facebookProvider: any;
 
 // Helper to check if config appears valid
 const isConfigValid = 
   firebaseConfig.apiKey && 
-  firebaseConfig.apiKey !== "YOUR_API_KEY_HERE" &&
+  firebaseConfig.apiKey.length > 20 &&
   !firebaseConfig.apiKey.includes("INSERT_KEY");
 
 if (isConfigValid) {
   try {
     const app = initializeApp(firebaseConfig);
+    analytics = getAnalytics(app);
     auth = getAuth(app);
     db = getFirestore(app);
     googleProvider = new GoogleAuthProvider();
-    githubProvider = new GithubAuthProvider();
-    facebookProvider = new FacebookAuthProvider();
   } catch (error) {
     console.error("Firebase initialization failed:", error);
+    auth = undefined;
+    db = undefined;
   }
 } else {
-  console.warn("Firebase not configured. App running in offline demo mode.");
+  console.warn("Firebase config invalid.");
 }
 
-// Mock User for Offline Mode
-const MOCK_GUEST_USER = {
-  uid: 'offline-guest',
-  isAnonymous: true,
-  displayName: 'Guest (Offline)',
-  email: null,
-  photoURL: null,
-  providerData: []
-} as unknown as User;
+// --- Auth Methods ---
 
 export const loginWithGoogle = async () => {
-  if (!auth) throw new Error("Firebase configuration is missing.");
+  if (!auth) throw new Error("Firebase Service Not Available");
   return (await signInWithPopup(auth, googleProvider)).user;
 };
 
-export const loginWithGithub = async () => {
-  if (!auth) throw new Error("Firebase configuration is missing.");
-  return (await signInWithPopup(auth, githubProvider)).user;
-};
-
-export const loginWithFacebook = async () => {
-  if (!auth) throw new Error("Firebase configuration is missing.");
-  return (await signInWithPopup(auth, facebookProvider)).user;
-};
-
 export const loginAsGuest = async () => {
-  if (!auth) {
-    // If offline, return mock user instead of throwing
-    return MOCK_GUEST_USER;
-  }
+  if (!auth) throw new Error("Firebase Service Not Available");
   return (await signInAnonymously(auth)).user;
 };
 
@@ -101,34 +75,85 @@ export const logoutUser = async () => {
   await signOut(auth);
 };
 
-export const subscribeToAuth = (callback: (user: User | null) => void) => {
+export const subscribeToAuth = (callback: (user: any | null) => void) => {
   if (!auth) {
-    // If not configured, immediately callback with null
     callback(null);
     return () => {};
   }
   return onAuthStateChanged(auth, callback);
 };
 
-// --- History Methods ---
+// --- Hybrid History Methods (Cloud + Local Fallback) ---
+
+const LOCAL_HISTORY_KEY = 'codeflow_local_history_v1';
+
+// Helper to interact with local storage history
+const LocalStorageHistory = {
+  get: (userId: string): HistoryItem[] => {
+    try {
+      const all = JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || '[]');
+      // For offline-guest, show everything or specific items. 
+      // For now, we filter by userId to allow multi-user simulation on same device
+      return all.filter((item: any) => item.userId === userId);
+    } catch { return []; }
+  },
+  add: (item: any) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || '[]');
+      // Prepend new item, keep max 50
+      const updated = [item, ...all].slice(0, 50);
+      localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
+    } catch (e) { console.error("Local save failed", e); }
+  },
+  delete: (id: string) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || '[]');
+      const updated = all.filter((item: any) => item.id !== id);
+      localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
+    } catch (e) { console.error("Local delete failed", e); }
+  }
+};
 
 export const saveSnippetToCloud = async (userId: string, language: string, code: string, comment?: string) => {
-  if (!db) return; // Offline mode: do nothing (local storage handles it)
+  // Prepare object
+  const docData = {
+    userId,
+    language,
+    code,
+    comment: comment || "",
+    // Cloud uses serverTimestamp, Local uses Date.now(). We handle this distinction.
+  };
+
+  // 1. If Offline Guest or No DB, go straight to local
+  if (userId === 'offline-guest' || !db) {
+    LocalStorageHistory.add({ ...docData, id: `local-${Date.now()}`, timestamp: Date.now() });
+    return;
+  }
+
+  // 2. Try Cloud
   try {
     await addDoc(collection(db, "history"), {
-      userId,
-      language,
-      code,
-      comment: comment || "",
+      ...docData,
       timestamp: serverTimestamp()
     });
-  } catch (e) {
-    console.error("Error saving snippet", e);
+  } catch (e: any) {
+    // 3. Fallback on Permission Error or Offline
+    if (e.code === 'permission-denied' || e.code === 'unavailable') {
+      console.warn(`Cloud save failed (${e.code}). Saving locally.`);
+      LocalStorageHistory.add({ ...docData, id: `local-${Date.now()}`, timestamp: Date.now() });
+    } else {
+      console.error("Error saving snippet", e);
+    }
   }
 };
 
 export const getHistoryFromCloud = async (userId: string): Promise<HistoryItem[]> => {
-  if (!db) return []; // Offline mode: return empty
+  // 1. If Offline Guest or No DB, go straight to local
+  if (userId === 'offline-guest' || !db) {
+    return LocalStorageHistory.get(userId);
+  }
+
+  // 2. Try Cloud
   try {
     const q = query(
       collection(db, "history"),
@@ -144,50 +169,68 @@ export const getHistoryFromCloud = async (userId: string): Promise<HistoryItem[]
       code: doc.data().code,
       comment: doc.data().comment
     }));
-  } catch (e) {
+  } catch (e: any) {
+    // 3. Fallback on Permission Error or Offline
+    if (e.code === 'permission-denied' || e.code === 'unavailable') {
+       console.warn(`Cloud fetch failed (${e.code}). Fetching local history.`);
+       return LocalStorageHistory.get(userId);
+    }
     console.error("Error fetching history", e);
     return [];
   }
 };
 
 export const deleteHistoryFromCloud = async (itemId: string) => {
+    if (itemId.startsWith('local-')) {
+      LocalStorageHistory.delete(itemId);
+      return;
+    }
+
     if (!db) return;
-    await deleteDoc(doc(db, "history", itemId));
+    try {
+      await deleteDoc(doc(db, "history", itemId));
+    } catch (e: any) {
+       console.error("Error deleting history", e);
+       // Attempt local delete just in case we have ID overlap or mixed mode
+       LocalStorageHistory.delete(itemId);
+    }
 };
 
 // --- Version Control (Git) Methods ---
 
 export const pushCommitsToCloud = async (userId: string, commits: Commit[]) => {
-  if (!db) throw new Error("Offline mode: Cannot push to cloud.");
-  
-  const batch = writeBatch(db);
-  const commitsRef = collection(db, "commits");
-
-  // We only push commits that aren't already on the server.
-  // For simplicity in this demo, we assume the UI passes only unsynced commits,
-  // or we just blindly add them. A real app would check existence.
-  // Here we will query by commit ID to avoid duplicates if re-pushing.
-  
-  for (const commit of commits) {
-    // Check if exists
-    const q = query(commitsRef, where("id", "==", commit.id), where("userId", "==", userId));
-    const snap = await getDocs(q);
-    
-    if (snap.empty) {
-      const newDocRef = doc(commitsRef); // Auto ID for the doc, but we store internal ID inside
-      batch.set(newDocRef, {
-        ...commit,
-        userId,
-        timestamp: serverTimestamp() // Use server time for ordering
-      });
-    }
+  if (!db || userId === 'offline-guest') {
+    throw new Error("Cannot push in offline mode");
   }
+  
+  try {
+    const batch = writeBatch(db);
+    const commitsRef = collection(db, "commits");
 
-  await batch.commit();
+    for (const commit of commits) {
+      const q = query(commitsRef, where("id", "==", commit.id), where("userId", "==", userId));
+      const snap = await getDocs(q);
+      
+      if (snap.empty) {
+        const newDocRef = doc(commitsRef);
+        batch.set(newDocRef, {
+          ...commit,
+          userId,
+          timestamp: serverTimestamp()
+        });
+      }
+    }
+    await batch.commit();
+  } catch (e: any) {
+    if (e.code === 'permission-denied') {
+      throw new Error("Cloud permissions denied. Please check Firestore Rules.");
+    }
+    throw e;
+  }
 };
 
 export const pullCommitsFromCloud = async (userId: string): Promise<Commit[]> => {
-  if (!db) return [];
+  if (!db || userId === 'offline-guest') return [];
   try {
     const q = query(
       collection(db, "commits"),
@@ -208,8 +251,9 @@ export const pullCommitsFromCloud = async (userId: string): Promise<Commit[]> =>
         isSynced: true
       };
     });
-  } catch (e) {
+  } catch (e: any) {
     console.error("Error pulling commits", e);
-    throw e;
+    // If perm denied, just return empty list, don't crash app
+    return [];
   }
 };

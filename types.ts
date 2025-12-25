@@ -47,3 +47,20 @@ export interface Commit {
 }
 
 export type ViewMode = 'OUTPUT' | 'EXPLANATION' | 'SUGGESTIONS';
+
+export interface EditorTheme {
+  id: string;
+  name: string;
+  type: 'dark' | 'light';
+  colors: {
+    background: string;       // The main editor text area background
+    text: string;            // The main code text color
+    caret: string;           // Cursor color (if supported via caret-color)
+    lineNumbersBg: string;   // Sidebar background
+    lineNumbersText: string; // Sidebar text color
+    uiBackground: string;    // Toolbar background
+    uiBorder: string;        // Border colors
+    uiText: string;          // Toolbar text color
+    placeholder: string;     // Placeholder text color
+  }
+}

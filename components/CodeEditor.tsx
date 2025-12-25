@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { SupportedLanguage } from '../types';
+import React, { useRef, useState } from 'react';
+import { SupportedLanguage, EditorTheme } from '../types';
 import { Icons } from './Icon';
 // @ts-ignore - Prettier imports are handled by importmap
 import { format } from 'prettier/standalone';
@@ -20,6 +20,7 @@ interface CodeEditorProps {
   onImageUpload?: (file: File) => void;
   isThinkingMode?: boolean;
   onToggleThinking?: () => void;
+  theme: EditorTheme;
 }
 
 const CodeEditor: React.FC<CodeEditorProps> = ({ 
@@ -30,15 +31,59 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   isSaving,
   onImageUpload,
   isThinkingMode,
-  onToggleThinking
+  onToggleThinking,
+  theme
 }) => {
   const [isFocused, setIsFocused] = useState(false);
   const [isFormatting, setIsFormatting] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
-  const [suggestion, setSuggestion] = useState<string | null>(null);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const getFileExtension = (lang: SupportedLanguage): string => {
+    switch (lang) {
+      case SupportedLanguage.JAVASCRIPT: return 'js';
+      case SupportedLanguage.PYTHON: return 'py';
+      case SupportedLanguage.JAVA: return 'java';
+      case SupportedLanguage.CPP: return 'cpp';
+      case SupportedLanguage.C: return 'c';
+      case SupportedLanguage.GO: return 'go';
+      case SupportedLanguage.HTML: return 'html';
+      case SupportedLanguage.SQL: return 'sql';
+      case SupportedLanguage.RUST: return 'rs';
+      case SupportedLanguage.SWIFT: return 'swift';
+      default: return 'txt';
+    }
+  };
+
+  const handleDownload = () => {
+    const blob = new Blob([code], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `script.${getFileExtension(language)}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleFileOpen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        onChange(content);
+      }
+    };
+    reader.readAsText(file);
+    if (e.target) e.target.value = ''; // Reset
+  };
 
   const handleFormat = async () => {
     setIsFormatting(true);
@@ -80,7 +125,6 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   const handleAutocomplete = async () => {
     if (isCompleting) return;
     setIsCompleting(true);
-    setSuggestion(null);
 
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -142,7 +186,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0] && onImageUpload) {
       onImageUpload(e.target.files[0]);
     }
@@ -155,28 +199,56 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
 
   return (
     <div 
-      className={`relative flex flex-col w-full h-full bg-slate-900 border-2 rounded-xl overflow-hidden transition-colors duration-200 group ${
-        isFocused ? 'border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.1)]' : 'border-slate-800'
+      className={`relative flex flex-col w-full h-full border-2 rounded-xl overflow-hidden transition-all duration-300 group ${theme.colors.uiBackground} ${theme.colors.uiBorder} ${
+        isFocused ? 'border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.1)]' : ''
       }`}
     >
       {/* Top Toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-950 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-           <span className="text-xs uppercase tracking-widest text-slate-500 font-bold mr-2">{language}</span>
-           
-           {/* Auto-Save Indicator */}
-           <div className={`flex items-center gap-1.5 text-[10px] font-medium transition-colors duration-500 ${isSaving ? 'text-indigo-400' : 'text-slate-600'}`}>
-             {isSaving ? (
-               <>
-                 <Icons.Save className="w-3 h-3 animate-pulse" />
-                 <span>Saving...</span>
-               </>
-             ) : (
-                <>
-                 <Icons.CheckSimple className="w-3 h-3" />
-                 <span>Saved</span>
-                </>
-             )}
+      <div className={`flex items-center justify-between px-3 py-2 border-b ${theme.colors.uiBackground} ${theme.colors.uiBorder}`}>
+        <div className="flex items-center gap-4">
+           <div className="flex items-center gap-2">
+             <span className={`text-xs uppercase tracking-widest font-bold mr-2 ${theme.colors.uiText}`}>{language}</span>
+             
+             {/* Auto-Save Indicator */}
+             <div className={`flex items-center gap-1.5 text-[10px] font-medium transition-colors duration-500 ${isSaving ? 'text-indigo-400' : theme.colors.uiText}`}>
+               {isSaving ? (
+                 <>
+                   <Icons.Save className="w-3 h-3 animate-pulse" />
+                   <span>Saving...</span>
+                 </>
+               ) : (
+                  <>
+                   <Icons.CheckSimple className="w-3 h-3" />
+                   <span>Saved</span>
+                  </>
+               )}
+             </div>
+           </div>
+
+           {/* File Operations */}
+           <div className={`flex items-center gap-1 pl-4 border-l ${theme.colors.uiBorder}`}>
+              <input 
+                 type="file" 
+                 ref={fileInputRef}
+                 className="hidden"
+                 accept=".js,.py,.java,.c,.cpp,.html,.sql,.rs,.swift,.txt,.go"
+                 onChange={handleFileOpen}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className={`p-1.5 rounded-md transition-colors ${theme.colors.background} ${theme.colors.uiText} hover:text-indigo-400`}
+                title="Open File"
+              >
+                <Icons.Open className="w-4 h-4" />
+              </button>
+              
+              <button
+                onClick={handleDownload}
+                className={`p-1.5 rounded-md transition-colors ${theme.colors.background} ${theme.colors.uiText} hover:text-indigo-400`}
+                title="Download Code"
+              >
+                <Icons.Download className="w-4 h-4" />
+              </button>
            </div>
         </div>
 
@@ -187,7 +259,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
              className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all border ${
                 isThinkingMode 
                 ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' 
-                : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'
+                : `${theme.colors.background} ${theme.colors.uiBorder} ${theme.colors.uiText} hover:opacity-80`
              }`}
              title={isThinkingMode ? "Thinking Mode Active (Gemini 3 Pro)" : "Fast Mode (Flash Lite)"}
            >
@@ -198,14 +270,14 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
            {/* Image Upload */}
            <input 
              type="file" 
-             ref={fileInputRef} 
+             ref={imageInputRef} 
              className="hidden" 
              accept="image/*" 
-             onChange={handleFileChange}
+             onChange={handleImageFileChange}
            />
            <button 
-             onClick={() => fileInputRef.current?.click()}
-             className="p-1.5 rounded-md bg-slate-800 text-slate-400 hover:text-indigo-400 hover:bg-slate-700 transition-colors"
+             onClick={() => imageInputRef.current?.click()}
+             className={`p-1.5 rounded-md transition-colors ${theme.colors.background} ${theme.colors.uiText} hover:text-indigo-400`}
              title="Upload Image to Code"
            >
              <Icons.Image className="w-4 h-4" />
@@ -217,7 +289,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
              className={`p-1.5 rounded-md transition-all ${
                isFormatting 
                  ? 'bg-indigo-500/20 text-indigo-400 animate-pulse' 
-                 : 'bg-slate-800 text-slate-400 hover:text-indigo-400 hover:bg-slate-700'
+                 : `${theme.colors.background} ${theme.colors.uiText} hover:text-indigo-400`
              }`}
              title={`Format Code ${!isPrettierSupported ? '(via AI)' : ''}`}
            >
@@ -228,7 +300,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
 
       <div className="flex flex-1 relative min-h-0">
         {/* Line Numbers */}
-        <div className="hidden md:flex flex-col items-end px-3 py-4 bg-slate-950 text-slate-500 font-mono text-sm border-r border-slate-800 select-none min-w-[3rem] overflow-hidden">
+        <div className={`hidden md:flex flex-col items-end px-3 py-4 font-mono text-sm border-r select-none min-w-[3rem] overflow-hidden ${theme.colors.lineNumbersBg} ${theme.colors.lineNumbersText} ${theme.colors.uiBorder}`}>
           {Array.from({ length: Math.max(lineCount, 15) }).map((_, i) => (
             <div key={i} className="leading-6">{i + 1}</div>
           ))}
@@ -246,7 +318,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
             if (isPrettierSupported) handleFormat();
           }}
           spellCheck={false}
-          className="flex-1 w-full h-full bg-slate-900 p-4 font-mono text-sm text-blue-100 outline-none resize-none leading-6 placeholder-slate-600"
+          className={`flex-1 w-full h-full p-4 font-mono text-sm outline-none resize-none leading-6 transition-colors duration-300 ${theme.colors.background} ${theme.colors.text} ${theme.colors.caret} ${theme.colors.placeholder}`}
           placeholder={`// Start coding in ${language}...`}
         />
 
@@ -257,7 +329,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
                  Fetching suggestions...
              </div>
         )}
-        <div className="absolute bottom-4 right-4 pointer-events-none opacity-50 text-[10px] text-slate-500 hidden md:block">
+        <div className={`absolute bottom-4 right-4 pointer-events-none opacity-50 text-[10px] hidden md:block ${theme.colors.uiText}`}>
             Ctrl + Space to complete
         </div>
       </div>

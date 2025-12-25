@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { SupportedLanguage, ViewMode, SimulationResult, HistoryItem } from './types';
+import { SupportedLanguage, ViewMode, SimulationResult, HistoryItem, EditorTheme } from './types';
 import CodeEditor from './components/CodeEditor';
 import OutputPanel from './components/OutputPanel';
 import HistoryPanel from './components/HistoryPanel';
 import TutorialModal from './components/TutorialModal';
 import LoginPage from './components/LoginPage';
 import GitPanel from './components/GitPanel';
+import ThemeSelector from './components/ThemeSelector';
 import { Icons } from './components/Icon';
 import { simulateCodeExecutionStream, explainCodeLogic, getCodeSuggestions, generateCodeFromImage, fixCodeError } from './services/geminiService';
 import { loginWithGoogle, logoutUser, subscribeToAuth, saveSnippetToCloud, getHistoryFromCloud, deleteHistoryFromCloud } from './services/firebase';
+import { THEMES } from './data/themes';
 
 // Initial Code Templates
 const TEMPLATES: Record<SupportedLanguage, string> = {
@@ -101,6 +103,7 @@ print(message)`
 };
 
 const STORAGE_KEY = 'codeflow_autosave_v1';
+const THEME_STORAGE_KEY = 'codeflow_theme_v1';
 
 const App: React.FC = () => {
   // Auth State
@@ -115,6 +118,7 @@ const App: React.FC = () => {
   const [output, setOutput] = useState<SimulationResult>({ output: '', isError: false });
   const [explanation, setExplanation] = useState<string>('');
   const [suggestions, setSuggestions] = useState<string>('');
+  const [currentTheme, setCurrentTheme] = useState<EditorTheme>(THEMES[0]);
   
   const [viewMode, setViewMode] = useState<ViewMode>('OUTPUT');
   const [isSimulating, setIsSimulating] = useState(false);
@@ -140,7 +144,16 @@ const App: React.FC = () => {
         setShowLogin(false);
         refreshHistory(user.uid);
       } else {
-        setCurrentUser((prev: any) => prev?.uid === 'offline-guest' ? prev : null);
+        // If not authenticated, we keep them as null initially. 
+        // If they skipped login, currentUser will be set manually to guest.
+        // We only check currentUser here if it was already set to guest
+        setCurrentUser((prev: any) => {
+           if (prev?.uid === 'offline-guest') {
+               refreshHistory('offline-guest');
+               return prev;
+           }
+           return null;
+        });
         setShowLogin((prev) => (currentUser?.uid === 'offline-guest' ? false : true));
       }
       setAuthLoading(false);
@@ -149,6 +162,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Load Code
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
@@ -160,6 +174,13 @@ const App: React.FC = () => {
       } catch (e) {
         console.error("Failed to parse autosave data");
       }
+    }
+    
+    // Load Theme
+    const savedThemeId = localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedThemeId) {
+      const found = THEMES.find(t => t.id === savedThemeId);
+      if (found) setCurrentTheme(found);
     }
   }, []);
 
@@ -181,13 +202,15 @@ const App: React.FC = () => {
     };
   }, [code, language]);
 
+  const handleThemeChange = (theme: EditorTheme) => {
+    setCurrentTheme(theme);
+    localStorage.setItem(THEME_STORAGE_KEY, theme.id);
+  };
+
   // --- Helper Functions ---
 
   const refreshHistory = async (uid: string) => {
-    if (uid === 'offline-guest') {
-      setHistory([]);
-      return;
-    }
+    // We now support history for offline-guest via local storage fallback
     const data = await getHistoryFromCloud(uid);
     setHistory(data);
   };
@@ -211,9 +234,10 @@ const App: React.FC = () => {
 
   const handleClearHistory = async () => {
     if(!currentUser) return;
-    if(confirm("Are you sure you want to delete all history? This cannot be undone.")) {
+    if(confirm("Are you sure you want to delete all history?")) {
+       // Ideally we batch delete, for now we clear UI and rely on user to delete items
+       // Or implement batch delete in firebase service
        setHistory([]);
-       alert("Batch delete not fully implemented in this demo, but list cleared.");
     }
   };
 
@@ -380,15 +404,17 @@ const App: React.FC = () => {
           refreshHistory(user.uid);
         }}
         onSkip={() => {
-           setCurrentUser({ uid: 'offline-guest', isAnonymous: true, displayName: 'Guest' });
+           const guestUser = { uid: 'offline-guest', isAnonymous: true, displayName: 'Guest' };
+           setCurrentUser(guestUser);
            setShowLogin(false);
+           refreshHistory(guestUser.uid);
         }}
       />
     );
   }
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans relative">
+    <div className={`flex flex-col h-screen ${currentTheme.type === 'light' ? 'bg-slate-100 text-slate-800' : 'bg-slate-900 text-slate-100'} overflow-hidden font-sans relative transition-colors duration-500`}>
       
       <TutorialModal 
         isOpen={isTutorialOpen}
@@ -424,26 +450,29 @@ const App: React.FC = () => {
       />
 
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 z-10 shrink-0">
+      <header className={`flex items-center justify-between px-6 py-4 border-b z-10 shrink-0 transition-colors duration-500 ${
+        currentTheme.type === 'light' 
+          ? 'bg-white border-slate-200' 
+          : 'bg-slate-900 border-slate-800'
+      }`}>
         <div className="flex items-center space-x-3">
           <div className="relative group">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full blur opacity-60 group-hover:opacity-100 transition duration-200"></div>
             <img 
               src="/logo.png" 
               alt="Logo" 
-              className="relative w-10 h-10 rounded-full border border-slate-800 bg-slate-900 object-cover" 
+              className={`relative w-10 h-10 rounded-full border object-cover ${currentTheme.type === 'light' ? 'bg-slate-100 border-slate-200' : 'bg-slate-900 border-slate-800'}`} 
               onError={(e) => {
                 e.currentTarget.style.display = 'none';
                 e.currentTarget.parentElement?.classList.add('hidden');
               }}
             />
-            {/* Fallback Icon logic handled by the img error handler or just let it hide */}
           </div>
           <div className="flex flex-col">
-            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+            <h1 className={`text-xl font-bold tracking-tight bg-clip-text text-transparent ${currentTheme.type === 'light' ? 'bg-gradient-to-r from-indigo-600 to-purple-600' : 'bg-gradient-to-r from-white to-slate-400'}`}>
               CODE WITH S
             </h1>
-            <span className="text-[10px] text-slate-500 font-medium">Learn. Code. Visualize.</span>
+            <span className={`text-[10px] font-medium ${currentTheme.type === 'light' ? 'text-slate-400' : 'text-slate-500'}`}>Learn. Code. Visualize.</span>
           </div>
         </div>
 
@@ -453,7 +482,11 @@ const App: React.FC = () => {
             <select 
               value={language}
               onChange={(e) => handleLanguageChange(e.target.value as SupportedLanguage)}
-              className="appearance-none bg-slate-800 text-slate-200 pl-4 pr-10 py-2 rounded-lg border border-slate-700 hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all cursor-pointer font-medium text-sm w-40"
+              className={`appearance-none pl-4 pr-10 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all cursor-pointer font-medium text-sm w-40 ${
+                currentTheme.type === 'light' 
+                  ? 'bg-slate-50 text-slate-700 border-slate-200 hover:border-indigo-500' 
+                  : 'bg-slate-800 text-slate-200 border-slate-700 hover:border-indigo-500'
+              }`}
             >
               {Object.values(SupportedLanguage).map(lang => (
                 <option key={lang} value={lang}>{lang}</option>
@@ -465,23 +498,32 @@ const App: React.FC = () => {
 
             <button
                onClick={() => setIsTutorialOpen(true)}
-               className="p-2 bg-slate-800 hover:bg-indigo-600/20 hover:text-indigo-400 text-slate-400 rounded-lg border border-slate-700 hover:border-indigo-500/50 transition-all"
+               className={`p-2 rounded-lg border transition-all ${
+                 currentTheme.type === 'light'
+                   ? 'bg-slate-50 text-slate-500 border-slate-200 hover:text-indigo-600 hover:bg-indigo-50'
+                   : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-indigo-400 hover:bg-indigo-600/20'
+               }`}
                title={`Learn ${language}`}
             >
                <Icons.Learn className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="h-6 w-px bg-slate-800 mx-2 hidden md:block"></div>
+          <div className={`h-6 w-px mx-2 hidden md:block ${currentTheme.type === 'light' ? 'bg-slate-200' : 'bg-slate-800'}`}></div>
+
+          {/* Theme Selector */}
+          <ThemeSelector currentTheme={currentTheme} onSelect={handleThemeChange} />
 
           {/* Controls */}
-          <div className="hidden md:flex items-center bg-slate-800 rounded-lg p-1 border border-slate-700">
+          <div className={`hidden md:flex items-center rounded-lg p-1 border ${
+             currentTheme.type === 'light' ? 'bg-slate-100 border-slate-200' : 'bg-slate-800 border-slate-700'
+          }`}>
              <button
               onClick={() => setAutoRun(!autoRun)}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                 autoRun 
-                  ? 'bg-emerald-500/10 text-emerald-400' 
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-emerald-500/10 text-emerald-500' 
+                  : `${currentTheme.type === 'light' ? 'text-slate-400 hover:text-slate-600' : 'text-slate-400 hover:text-slate-200'}`
               }`}
              >
                {autoRun ? 'Auto-Run' : 'Manual'}
@@ -520,7 +562,7 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col md:flex-row p-4 gap-4 overflow-hidden relative">
         <section className="flex-1 flex flex-col min-w-0">
           <div className="flex items-center justify-between mb-3 px-1 gap-4">
-            <h2 className="text-sm font-semibold text-slate-400 flex items-center gap-2 shrink-0">
+            <h2 className={`text-sm font-semibold flex items-center gap-2 shrink-0 ${currentTheme.type === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
               <Icons.Code2 className="w-4 h-4" />
               Editor
             </h2>
@@ -531,7 +573,11 @@ const App: React.FC = () => {
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 placeholder="Add a note to this snippet (saved on Run)..."
-                className="w-full bg-slate-900/50 border-b border-slate-800 hover:border-slate-600 focus:border-indigo-500 text-xs text-slate-300 placeholder-slate-600 focus:outline-none transition-all pl-7 pr-2 py-1"
+                className={`w-full border-b text-xs focus:outline-none transition-all pl-7 pr-2 py-1 ${
+                  currentTheme.type === 'light' 
+                    ? 'bg-slate-100 border-slate-200 hover:border-slate-400 focus:border-indigo-500 text-slate-700 placeholder-slate-400'
+                    : 'bg-slate-900/50 border-slate-800 hover:border-slate-600 focus:border-indigo-500 text-slate-300 placeholder-slate-600'
+                }`}
               />
             </div>
           </div>
@@ -545,18 +591,19 @@ const App: React.FC = () => {
                 onImageUpload={handleImageUpload}
                 isThinkingMode={isThinkingMode}
                 onToggleThinking={() => setIsThinkingMode(!isThinkingMode)}
+                theme={currentTheme}
              />
           </div>
         </section>
 
         <section className="flex-1 flex flex-col min-w-0 md:max-w-[45%] lg:max-w-[40%] transition-all">
           <div className="flex items-center justify-between mb-3 px-1">
-             <div className="flex space-x-1 bg-slate-900/50 p-1 rounded-lg">
+             <div className={`flex space-x-1 p-1 rounded-lg ${currentTheme.type === 'light' ? 'bg-slate-200' : 'bg-slate-900/50'}`}>
                 <button
                   onClick={() => setViewMode('OUTPUT')}
                   className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                     viewMode === 'OUTPUT' 
-                      ? 'bg-slate-800 text-indigo-400 shadow-sm' 
+                      ? `${currentTheme.type === 'light' ? 'bg-white text-indigo-600 shadow-sm' : 'bg-slate-800 text-indigo-400 shadow-sm'}` 
                       : 'text-slate-500 hover:text-slate-300'
                   }`}
                 >
@@ -567,7 +614,7 @@ const App: React.FC = () => {
                   onClick={handleExplainClick}
                   className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                     viewMode === 'EXPLANATION' 
-                      ? 'bg-slate-800 text-purple-400 shadow-sm' 
+                      ? `${currentTheme.type === 'light' ? 'bg-white text-purple-600 shadow-sm' : 'bg-slate-800 text-purple-400 shadow-sm'}` 
                       : 'text-slate-500 hover:text-slate-300'
                   }`}
                 >
@@ -578,7 +625,7 @@ const App: React.FC = () => {
                   onClick={handleSuggestionClick}
                   className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                     viewMode === 'SUGGESTIONS' 
-                      ? 'bg-slate-800 text-amber-400 shadow-sm' 
+                      ? `${currentTheme.type === 'light' ? 'bg-white text-amber-600 shadow-sm' : 'bg-slate-800 text-amber-400 shadow-sm'}` 
                       : 'text-slate-500 hover:text-slate-300'
                   }`}
                 >
@@ -617,7 +664,11 @@ const App: React.FC = () => {
 
       </main>
 
-      <footer className="py-2 px-6 bg-slate-900 border-t border-slate-800 text-xs text-slate-500 flex justify-between items-center shrink-0">
+      <footer className={`py-2 px-6 border-t text-xs flex justify-between items-center shrink-0 ${
+         currentTheme.type === 'light' 
+           ? 'bg-white border-slate-200 text-slate-400' 
+           : 'bg-slate-900 border-slate-800 text-slate-500'
+      }`}>
         <div className="flex items-center gap-4">
            <p>Powered by Google Gemini 2.0</p>
            {currentUser && (
