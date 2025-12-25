@@ -8,8 +8,6 @@ interface HistoryPanelProps {
   onClose: () => void;
   onSelect: (item: HistoryItem) => void;
   onClear: () => void;
-  isLoggedIn: boolean;
-  onLogin: () => void;
 }
 
 const HistoryPanel: React.FC<HistoryPanelProps> = ({ 
@@ -17,9 +15,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({
   isOpen, 
   onClose, 
   onSelect,
-  onClear,
-  isLoggedIn,
-  onLogin
+  onClear
 }) => {
   return (
     <div className={`fixed inset-y-0 right-0 w-80 bg-slate-900 border-l border-slate-800 transform transition-transform duration-300 ease-in-out z-50 ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
@@ -37,60 +33,46 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {!isLoggedIn ? (
-            <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
-               <div className="bg-slate-800 p-3 rounded-full">
-                 <Icons.User className="w-8 h-8 text-slate-400" />
-               </div>
-               <div className="space-y-1">
-                 <p className="text-slate-300 font-medium">Sync with Cloud</p>
-                 <p className="text-xs text-slate-500 max-w-[200px]">Sign in to save your coding history and access it anywhere.</p>
-               </div>
-               <button 
-                 onClick={onLogin}
-                 className="flex items-center gap-2 bg-white text-slate-900 px-4 py-2 rounded-lg font-bold text-sm hover:bg-slate-200 transition-colors"
+           {history.length === 0 ? (
+             <div className="text-center text-slate-500 py-10 text-sm">
+               No history yet. <br/> Run some code to see it here!
+             </div>
+           ) : (
+             history.map((item) => (
+               <button
+                 key={item.id}
+                 onClick={() => onSelect(item)}
+                 className="w-full text-left p-3 rounded-lg bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-indigo-500/30 transition-all group"
                >
-                 <img src="https://www.google.com/favicon.ico" alt="G" className="w-4 h-4" />
-                 Sign in with Google
-               </button>
-            </div>
-          ) : (
-             <>
-               {history.length === 0 ? (
-                 <div className="text-center text-slate-500 py-10 text-sm">
-                   No history yet. <br/> Run some code to see it here!
+                 <div className="flex justify-between items-start mb-2">
+                   <span className="text-[10px] font-bold text-indigo-400 bg-indigo-400/10 px-1.5 py-0.5 rounded uppercase tracking-wider">{item.language}</span>
+                   <span className="text-[10px] text-slate-500">{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                  </div>
-               ) : (
-                 history.map((item) => (
-                   <button
-                     key={item.id}
-                     onClick={() => onSelect(item)}
-                     className="w-full text-left p-3 rounded-lg bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-indigo-500/30 transition-all group"
-                   >
-                     <div className="flex justify-between items-start mb-1">
-                       <span className="text-xs font-bold text-indigo-400 bg-indigo-400/10 px-1.5 py-0.5 rounded">{item.language}</span>
-                       <span className="text-[10px] text-slate-500">{new Date(item.timestamp).toLocaleTimeString()}</span>
-                     </div>
-                     
-                     {item.comment && (
-                       <div className="flex items-start gap-1.5 mb-2 bg-slate-900/50 p-1.5 rounded border border-slate-800/50">
-                         <Icons.Comment className="w-3 h-3 text-slate-500 mt-0.5 shrink-0" />
-                         <span className="text-xs text-slate-300 italic line-clamp-2 leading-relaxed">"{item.comment}"</span>
-                       </div>
-                     )}
-
-                     <p className="text-xs text-slate-400 font-mono line-clamp-2 opacity-80 group-hover:opacity-100 pl-1 border-l-2 border-slate-700">
-                       {item.code}
+                 
+                 <div className="mb-3">
+                   <h3 className="text-sm font-bold text-slate-100 group-hover:text-indigo-300 transition-colors leading-tight">
+                     {item.title || "Untitled Snippet"}
+                   </h3>
+                   {item.comment && item.comment !== item.title && (
+                     <p className="text-[11px] text-slate-400 italic mt-1 truncate">
+                       {item.comment}
                      </p>
-                   </button>
-                 ))
-               )}
-             </>
-          )}
+                   )}
+                 </div>
+
+                 <div className="relative">
+                   <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-900/40 pointer-events-none"></div>
+                   <p className="text-[10px] text-slate-500 font-mono line-clamp-2 pl-2 border-l-2 border-slate-700/50 group-hover:border-indigo-500/50 transition-colors">
+                     {item.code}
+                   </p>
+                 </div>
+               </button>
+             ))
+           )}
         </div>
 
         {/* Footer */}
-        {isLoggedIn && history.length > 0 && (
+        {history.length > 0 && (
           <div className="p-4 border-t border-slate-800 bg-slate-950">
             <button 
               onClick={onClear}

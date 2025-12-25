@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { 
   Play, 
@@ -31,7 +32,11 @@ import {
   ExternalLink,
   Palette,
   Download,
-  FolderOpen
+  FolderOpen,
+  Eye,
+  EyeOff,
+  Github,
+  Chrome
 } from 'lucide-react';
 
 export const Icons = {
@@ -64,8 +69,11 @@ export const Icons = {
   Save,
   CheckSimple: Check,
   ExternalLink,
-  Wand2,
   Palette,
   Download,
-  Open: FolderOpen
+  Open: FolderOpen,
+  Eye,
+  EyeOff,
+  Github,
+  Google: Chrome
 };

@@ -3,12 +3,23 @@ import { initializeApp } from "firebase/app";
 // @ts-ignore
 import { getAnalytics } from "firebase/analytics";
 // @ts-ignore
-import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
+import { 
+  getAuth, 
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut, 
+  onAuthStateChanged,
+  updateProfile,
+  setPersistence,
+  browserLocalPersistence,
+  sendPasswordResetEmail
+} from "firebase/auth";
 // @ts-ignore
 import { 
   getFirestore, 
   collection, 
-  addDoc, 
+  addDoc,
+  setDoc, 
   query, 
   where, 
   orderBy, 
@@ -34,7 +45,6 @@ const firebaseConfig = {
 let auth: any;
 let db: any;
 let analytics: any;
-let googleProvider: any;
 
 // Helper to check if config appears valid
 const isConfigValid = 
@@ -48,7 +58,6 @@ if (isConfigValid) {
     analytics = getAnalytics(app);
     auth = getAuth(app);
     db = getFirestore(app);
-    googleProvider = new GoogleAuthProvider();
   } catch (error) {
     console.error("Firebase initialization failed:", error);
     auth = undefined;
@@ -60,14 +69,62 @@ if (isConfigValid) {
 
 // --- Auth Methods ---
 
-export const loginWithGoogle = async () => {
-  if (!auth) throw new Error("Firebase Service Not Available");
-  return (await signInWithPopup(auth, googleProvider)).user;
+export const registerUser = async (email: string, pass: string, name: string) => {
+  if (!auth) throw new Error("Auth Service Unavailable");
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+    const user = userCredential.user;
+    await updateProfile(user, { displayName: name });
+
+    if (db) {
+      try {
+        await setDoc(doc(db, "users", user.uid), {
+          uid: user.uid,
+          displayName: name,
+          email: email,
+          createdAt: serverTimestamp(),
+          lastLogin: serverTimestamp()
+        });
+      } catch (dbError) {
+        console.error("Error creating user document:", dbError);
+      }
+    }
+    return user;
+  } catch (error: any) {
+    throw error;
+  }
 };
 
-export const loginAsGuest = async () => {
-  if (!auth) throw new Error("Firebase Service Not Available");
-  return (await signInAnonymously(auth)).user;
+export const loginUser = async (email: string, pass: string) => {
+  if (!auth) throw new Error("Auth Service Unavailable");
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+    const userCredential = await signInWithEmailAndPassword(auth, email, pass);
+    
+    if (db) {
+      try {
+        const userRef = doc(db, "users", userCredential.user.uid);
+        await setDoc(userRef, { 
+          lastLogin: serverTimestamp(),
+          email: email 
+        }, { merge: true });
+      } catch (dbError) {
+        console.error("Error updating user login timestamp:", dbError);
+      }
+    }
+    return userCredential.user;
+  } catch (error: any) {
+    throw error;
+  }
+};
+
+export const resetUserPassword = async (email: string) => {
+  if (!auth) throw new Error("Auth Service Unavailable");
+  try {
+    await sendPasswordResetEmail(auth, email);
+  } catch (error: any) {
+    throw error;
+  }
 };
 
 export const logoutUser = async () => {
@@ -83,125 +140,67 @@ export const subscribeToAuth = (callback: (user: any | null) => void) => {
   return onAuthStateChanged(auth, callback);
 };
 
-// --- Hybrid History Methods (Cloud + Local Fallback) ---
+// --- History Methods (Optimized to avoid index requirement) ---
 
-const LOCAL_HISTORY_KEY = 'codeflow_local_history_v1';
-
-// Helper to interact with local storage history
-const LocalStorageHistory = {
-  get: (userId: string): HistoryItem[] => {
-    try {
-      const all = JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || '[]');
-      // For offline-guest, show everything or specific items. 
-      // For now, we filter by userId to allow multi-user simulation on same device
-      return all.filter((item: any) => item.userId === userId);
-    } catch { return []; }
-  },
-  add: (item: any) => {
-    try {
-      const all = JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || '[]');
-      // Prepend new item, keep max 50
-      const updated = [item, ...all].slice(0, 50);
-      localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
-    } catch (e) { console.error("Local save failed", e); }
-  },
-  delete: (id: string) => {
-    try {
-      const all = JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || '[]');
-      const updated = all.filter((item: any) => item.id !== id);
-      localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
-    } catch (e) { console.error("Local delete failed", e); }
-  }
-};
-
-export const saveSnippetToCloud = async (userId: string, language: string, code: string, comment?: string) => {
-  // Prepare object
-  const docData = {
-    userId,
-    language,
-    code,
-    comment: comment || "",
-    // Cloud uses serverTimestamp, Local uses Date.now(). We handle this distinction.
-  };
-
-  // 1. If Offline Guest or No DB, go straight to local
-  if (userId === 'offline-guest' || !db) {
-    LocalStorageHistory.add({ ...docData, id: `local-${Date.now()}`, timestamp: Date.now() });
-    return;
-  }
-
-  // 2. Try Cloud
+export const saveSnippetToCloud = async (userId: string, language: string, code: string, title: string, comment?: string) => {
+  if (!db || !userId) return;
   try {
     await addDoc(collection(db, "history"), {
-      ...docData,
+      userId,
+      language,
+      code,
+      title,
+      comment: comment || "",
       timestamp: serverTimestamp()
     });
   } catch (e: any) {
-    // 3. Fallback on Permission Error or Offline
-    if (e.code === 'permission-denied' || e.code === 'unavailable') {
-      console.warn(`Cloud save failed (${e.code}). Saving locally.`);
-      LocalStorageHistory.add({ ...docData, id: `local-${Date.now()}`, timestamp: Date.now() });
-    } else {
-      console.error("Error saving snippet", e);
-    }
+    console.error("Error saving snippet", e);
+    throw e;
   }
 };
 
 export const getHistoryFromCloud = async (userId: string): Promise<HistoryItem[]> => {
-  // 1. If Offline Guest or No DB, go straight to local
-  if (userId === 'offline-guest' || !db) {
-    return LocalStorageHistory.get(userId);
-  }
+  if (!db || !userId) return [];
 
-  // 2. Try Cloud
   try {
+    // Removed orderBy to avoid index requirement. We sort client-side.
     const q = query(
       collection(db, "history"),
-      where("userId", "==", userId),
-      orderBy("timestamp", "desc")
+      where("userId", "==", userId)
     );
     
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
+    const items = querySnapshot.docs.map(doc => ({
       id: doc.id,
       timestamp: doc.data().timestamp?.toMillis() || Date.now(),
       language: doc.data().language as SupportedLanguage,
       code: doc.data().code,
+      title: doc.data().title || "Untitled Snippet",
       comment: doc.data().comment
     }));
+
+    // Client-side sort: Descending by timestamp
+    return items.sort((a, b) => b.timestamp - a.timestamp);
   } catch (e: any) {
-    // 3. Fallback on Permission Error or Offline
-    if (e.code === 'permission-denied' || e.code === 'unavailable') {
-       console.warn(`Cloud fetch failed (${e.code}). Fetching local history.`);
-       return LocalStorageHistory.get(userId);
-    }
     console.error("Error fetching history", e);
-    return [];
+    throw e;
   }
 };
 
 export const deleteHistoryFromCloud = async (itemId: string) => {
-    if (itemId.startsWith('local-')) {
-      LocalStorageHistory.delete(itemId);
-      return;
-    }
-
     if (!db) return;
     try {
       await deleteDoc(doc(db, "history", itemId));
     } catch (e: any) {
        console.error("Error deleting history", e);
-       // Attempt local delete just in case we have ID overlap or mixed mode
-       LocalStorageHistory.delete(itemId);
+       throw e;
     }
 };
 
 // --- Version Control (Git) Methods ---
 
 export const pushCommitsToCloud = async (userId: string, commits: Commit[]) => {
-  if (!db || userId === 'offline-guest') {
-    throw new Error("Cannot push in offline mode");
-  }
+  if (!db || !userId) return;
   
   try {
     const batch = writeBatch(db);
@@ -222,24 +221,22 @@ export const pushCommitsToCloud = async (userId: string, commits: Commit[]) => {
     }
     await batch.commit();
   } catch (e: any) {
-    if (e.code === 'permission-denied') {
-      throw new Error("Cloud permissions denied. Please check Firestore Rules.");
-    }
+    console.error("Error pushing commits", e);
     throw e;
   }
 };
 
 export const pullCommitsFromCloud = async (userId: string): Promise<Commit[]> => {
-  if (!db || userId === 'offline-guest') return [];
+  if (!db || !userId) return [];
   try {
+    // Removed orderBy to avoid index requirement
     const q = query(
       collection(db, "commits"),
-      where("userId", "==", userId),
-      orderBy("timestamp", "desc")
+      where("userId", "==", userId)
     );
     
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
+    const items = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: data.id,
@@ -251,9 +248,11 @@ export const pullCommitsFromCloud = async (userId: string): Promise<Commit[]> =>
         isSynced: true
       };
     });
+
+    // Client-side sort: Descending by timestamp
+    return items.sort((a, b) => b.timestamp - a.timestamp);
   } catch (e: any) {
     console.error("Error pulling commits", e);
-    // If perm denied, just return empty list, don't crash app
-    return [];
+    throw e;
   }
 };

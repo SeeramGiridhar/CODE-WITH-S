@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { ViewMode, SimulationResult, SupportedLanguage } from '../types';
@@ -139,7 +140,8 @@ const OutputPanel: React.FC<OutputPanelProps> = ({
                         disabled={isFixing}
                         className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded text-xs font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
                     >
-                        {isFixing ? <Icons.Spinner className="w-3 h-3 animate-spin"/> : <Icons.Wand2 className="w-3 h-3"/>}
+                        {/* Fix: Using Icons.Format instead of Icons.Wand2 */}
+                        {isFixing ? <Icons.Spinner className="w-3 h-3 animate-spin"/> : <Icons.Format className="w-3 h-3"/>}
                         {isFixing ? 'Fixing...' : 'Fix Code with AI'}
                     </button>
                 </div>

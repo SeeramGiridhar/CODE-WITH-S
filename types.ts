@@ -33,6 +33,7 @@ export interface HistoryItem {
   timestamp: number;
   language: SupportedLanguage;
   code: string;
+  title: string;
   comment?: string;
 }
 

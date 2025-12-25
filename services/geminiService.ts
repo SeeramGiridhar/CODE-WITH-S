@@ -1,12 +1,37 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { SupportedLanguage } from "../types";
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// Models
-const MODEL_FAST = 'gemini-2.5-flash-lite-preview-02-05'; 
+// Models based on @google/genai guidelines
+const MODEL_FAST = 'gemini-flash-lite-latest'; 
 const MODEL_SMART = 'gemini-3-pro-preview';
+
+/**
+ * Generates a short, descriptive title for a code snippet.
+ */
+export const generateCodeTitle = async (code: string, language: SupportedLanguage): Promise<string> => {
+  if (!code.trim()) return "Untitled Snippet";
+
+  const prompt = `Analyze this ${language} code and generate a 3-5 word descriptive title.
+Examples: "Addition of Two Numbers", "Simple Login Form", "Binary Search Tree".
+Return ONLY the title string. No markdown, no quotes.
+
+Code:
+${code.substring(0, 1000)}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: MODEL_FAST,
+      contents: prompt,
+    });
+    return response.text?.trim() || "Untitled Snippet";
+  } catch (error) {
+    console.error("Title Generation Error:", error);
+    return "Code Snippet";
+  }
+};
 
 /**
  * Simulates code execution using streaming for faster perceived speed.
@@ -144,6 +169,7 @@ ${recentCode}`;
         contents: prompt,
         config: {
             maxOutputTokens: 64, // Keep it short for "IntelliSense" feel
+            thinkingConfig: { thinkingBudget: 0 }, // Disable thinking for ultra-low latency completions
             stopSequences: ["\n\n"]
         }
       });
@@ -152,6 +178,38 @@ ${recentCode}`;
       return "";
     }
   };
+
+/**
+ * IntelliSense Candidates: Fetches 3-5 possible next words or snippets as a JSON array.
+ */
+export const getIntelliSenseCandidates = async (code: string, language: SupportedLanguage): Promise<string[]> => {
+    const recentCode = code.split('\n').slice(-15).join('\n');
+    const prompt = `Based on this ${language} code, suggest 3-5 possible next tokens, function calls, or short variable completions.
+Return ONLY a JSON array of strings. Do not include markdown.
+
+Code:
+${recentCode}`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: MODEL_FAST,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                // Recommended responseSchema for array output
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                }
+            }
+        });
+        const text = response.text || "[]";
+        return JSON.parse(text);
+    } catch (e) {
+        console.error("IntelliSense Gemini Error:", e);
+        return [];
+    }
+};
 
 /**
  * Fixes code errors.

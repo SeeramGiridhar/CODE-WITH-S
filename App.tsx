@@ -8,8 +8,8 @@ import LoginPage from './components/LoginPage';
 import GitPanel from './components/GitPanel';
 import ThemeSelector from './components/ThemeSelector';
 import { Icons } from './components/Icon';
-import { simulateCodeExecutionStream, explainCodeLogic, getCodeSuggestions, generateCodeFromImage, fixCodeError } from './services/geminiService';
-import { loginWithGoogle, logoutUser, subscribeToAuth, saveSnippetToCloud, getHistoryFromCloud, deleteHistoryFromCloud } from './services/firebase';
+import { simulateCodeExecutionStream, explainCodeLogic, getCodeSuggestions, generateCodeFromImage, fixCodeError, generateCodeTitle } from './services/geminiService';
+import { logoutUser, subscribeToAuth, saveSnippetToCloud, getHistoryFromCloud, deleteHistoryFromCloud } from './services/firebase';
 import { THEMES } from './data/themes';
 
 // Initial Code Templates
@@ -104,12 +104,12 @@ print(message)`
 
 const STORAGE_KEY = 'codeflow_autosave_v1';
 const THEME_STORAGE_KEY = 'codeflow_theme_v1';
+const PERMISSION_DISMISSED_KEY = 'codeflow_permission_dismissed';
 
 const App: React.FC = () => {
   // Auth State
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [showLogin, setShowLogin] = useState(true);
 
   // App State
   const [language, setLanguage] = useState<SupportedLanguage>(SupportedLanguage.JAVASCRIPT);
@@ -128,6 +128,10 @@ const App: React.FC = () => {
   // New Feature States
   const [isSaving, setIsSaving] = useState(false);
   const [isThinkingMode, setIsThinkingMode] = useState(false);
+  const [permissionError, setPermissionError] = useState(false);
+  const [isPermissionDismissed, setIsPermissionDismissed] = useState(() => {
+    return sessionStorage.getItem(PERMISSION_DISMISSED_KEY) === 'true';
+  });
 
   // Panels State
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -139,22 +143,11 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToAuth((user) => {
+      setCurrentUser(user);
       if (user) {
-        setCurrentUser(user);
-        setShowLogin(false);
         refreshHistory(user.uid);
       } else {
-        // If not authenticated, we keep them as null initially. 
-        // If they skipped login, currentUser will be set manually to guest.
-        // We only check currentUser here if it was already set to guest
-        setCurrentUser((prev: any) => {
-           if (prev?.uid === 'offline-guest') {
-               refreshHistory('offline-guest');
-               return prev;
-           }
-           return null;
-        });
-        setShowLogin((prev) => (currentUser?.uid === 'offline-guest' ? false : true));
+        setHistory([]);
       }
       setAuthLoading(false);
     });
@@ -162,7 +155,6 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Load Code
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
@@ -176,7 +168,6 @@ const App: React.FC = () => {
       }
     }
     
-    // Load Theme
     const savedThemeId = localStorage.getItem(THEME_STORAGE_KEY);
     if (savedThemeId) {
       const found = THEMES.find(t => t.id === savedThemeId);
@@ -210,33 +201,58 @@ const App: React.FC = () => {
   // --- Helper Functions ---
 
   const refreshHistory = async (uid: string) => {
-    // We now support history for offline-guest via local storage fallback
-    const data = await getHistoryFromCloud(uid);
-    setHistory(data);
+    try {
+      const data = await getHistoryFromCloud(uid);
+      setHistory(data);
+    } catch (error: any) {
+      if (error.code === 'failed-precondition' || error.message?.includes('index')) {
+        console.warn("Firestore index missing. Falling back to client-side sort.");
+        return;
+      }
+      
+      console.error("History fetch error:", error);
+      if (error.code === 'permission-denied' || error.message?.includes('permission')) {
+        if (!isPermissionDismissed) {
+          setPermissionError(true);
+        }
+      }
+    }
   };
 
-  const saveToHistory = async (lang: SupportedLanguage, codeStr: string, note: string) => {
+  const saveToHistory = async (lang: SupportedLanguage, codeStr: string, manualTitle: string) => {
     if (!currentUser) return;
-    if (history.length > 0 && history[0].code === codeStr && history[0].language === lang && history[0].comment === note) return;
+    
+    if (history.length > 0 && 
+        history[0].code === codeStr && 
+        history[0].language === lang && 
+        (history[0].title === manualTitle || history[0].comment === manualTitle)) return;
 
-    await saveSnippetToCloud(currentUser.uid, lang, codeStr, note);
-    refreshHistory(currentUser.uid);
+    try {
+      const finalTitle = manualTitle.trim() || await generateCodeTitle(codeStr, lang);
+      await saveSnippetToCloud(currentUser.uid, lang, codeStr, finalTitle);
+      refreshHistory(currentUser.uid);
+    } catch (error: any) {
+      if (error.code === 'permission-denied' || error.message?.includes('permission')) {
+        if (!isPermissionDismissed) {
+          setPermissionError(true);
+        }
+      }
+    }
+  };
+
+  const handleDismissPermissionError = () => {
+    setPermissionError(false);
+    setIsPermissionDismissed(true);
+    sessionStorage.setItem(PERMISSION_DISMISSED_KEY, 'true');
   };
 
   const handleLogout = async () => {
-    if (currentUser?.uid === 'offline-guest') {
-       setCurrentUser(null);
-       setShowLogin(true);
-    } else {
-       await logoutUser();
-    }
+     await logoutUser();
   };
 
   const handleClearHistory = async () => {
     if(!currentUser) return;
     if(confirm("Are you sure you want to delete all history?")) {
-       // Ideally we batch delete, for now we clear UI and rely on user to delete items
-       // Or implement batch delete in firebase service
        setHistory([]);
     }
   };
@@ -244,11 +260,9 @@ const App: React.FC = () => {
   const handleSelectHistory = (item: HistoryItem) => {
     setLanguage(item.language);
     setCode(item.code);
-    setComment(item.comment || '');
+    setComment(item.title || ''); 
     setIsHistoryOpen(false);
   };
-
-  // --- Image Analysis ---
 
   const handleImageUpload = async (file: File) => {
     setIsAiThinking(true);
@@ -273,10 +287,6 @@ const App: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
-  // --- Code Execution ---
-
-  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const handleLanguageChange = (lang: SupportedLanguage) => {
     setLanguage(lang);
     setCode(TEMPLATES[lang]);
@@ -288,7 +298,6 @@ const App: React.FC = () => {
 
   const executeCode = useCallback(async (codeToRun: string, lang: SupportedLanguage) => {
     if (!codeToRun.trim()) return;
-
     setViewMode('OUTPUT');
     
     if (lang === SupportedLanguage.HTML) {
@@ -307,9 +316,7 @@ const App: React.FC = () => {
       try {
         console.log = (...args) => logs.push(args.map(a => String(a)).join(' '));
         console.error = (...args) => logs.push("Error: " + args.map(a => String(a)).join(' '));
-        
         new Function(codeToRun)(); 
-        
         setOutput({ output: logs.join('\n') || "Done (No Output)", isError: false });
         saveToHistory(lang, codeToRun, comment);
       } catch (e: any) {
@@ -320,11 +327,9 @@ const App: React.FC = () => {
         setIsSimulating(false);
       }
     } else {
-      // Gemini Streaming for other languages
       try {
         const stream = simulateCodeExecutionStream(codeToRun, lang);
         let fullOutput = "";
-        // Reset output initially
         setOutput({ output: "", isError: false });
         
         for await (const chunk of stream) {
@@ -334,15 +339,14 @@ const App: React.FC = () => {
 
         const isErr = fullOutput.toLowerCase().includes('error') || fullOutput.toLowerCase().includes('exception');
         setOutput({ output: fullOutput, isError: isErr });
-        
-        if (!isErr) saveToHistory(lang, codeToRun, comment);
+        saveToHistory(lang, codeToRun, comment);
       } catch (err) {
         setOutput({ output: "Execution failed.", isError: true });
       } finally {
         setIsSimulating(false);
       }
     }
-  }, [currentUser, comment, history]); 
+  }, [currentUser, comment, history, language, isPermissionDismissed]); 
 
   const handleFixError = async (errorMsg: string) => {
       const fixed = await fixCodeError(code, errorMsg, language);
@@ -356,7 +360,6 @@ const App: React.FC = () => {
   const handleExplainClick = async () => {
     setViewMode('EXPLANATION');
     if (!code.trim()) return;
-    
     setIsAiThinking(true);
     const exp = await explainCodeLogic(code, language, isThinkingMode);
     setExplanation(exp);
@@ -371,22 +374,21 @@ const App: React.FC = () => {
     setIsAiThinking(false);
   };
 
-  // Auto-run effect
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (autoRun && code) {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => {
         executeCode(code, language);
-      }, 800);
+      }, 1500); 
     }
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, [code, autoRun, language, executeCode]);
 
-  // --- Render Logic ---
-
-  if (authLoading && !currentUser) {
+  if (authLoading) {
     return (
       <div className="h-screen w-full bg-slate-950 flex flex-col items-center justify-center text-slate-500">
         <Icons.Spinner className="w-10 h-10 animate-spin text-indigo-500 mb-4" />
@@ -395,19 +397,12 @@ const App: React.FC = () => {
     );
   }
 
-  if (showLogin && !currentUser) {
+  if (!currentUser) {
     return (
       <LoginPage 
         onLoginSuccess={(user) => {
           setCurrentUser(user);
-          setShowLogin(false);
           refreshHistory(user.uid);
-        }}
-        onSkip={() => {
-           const guestUser = { uid: 'offline-guest', isAnonymous: true, displayName: 'Guest' };
-           setCurrentUser(guestUser);
-           setShowLogin(false);
-           refreshHistory(guestUser.uid);
         }}
       />
     );
@@ -416,6 +411,61 @@ const App: React.FC = () => {
   return (
     <div className={`flex flex-col h-screen ${currentTheme.type === 'light' ? 'bg-slate-100 text-slate-800' : 'bg-slate-900 text-slate-100'} overflow-hidden font-sans relative transition-colors duration-500`}>
       
+      {permissionError && !isPermissionDismissed && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-6 shadow-2xl">
+             <div className="flex items-start gap-4 mb-4">
+                <div className="p-3 bg-red-500/10 rounded-full">
+                  <Icons.Error className="w-6 h-6 text-red-500" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white">Database Setup Required</h3>
+                  <p className="text-slate-400 text-sm mt-1">
+                    To save your history to the cloud, you need to configure Firestore Security Rules.
+                  </p>
+                </div>
+             </div>
+             
+             <div className="bg-black/50 rounded-lg p-4 border border-slate-800 mb-6 font-mono text-xs text-slate-300 overflow-x-auto relative group">
+               <button 
+                 onClick={() => {
+                   navigator.clipboard.writeText(`rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if request.auth != null;\n    }\n  }\n}`);
+                 }}
+                 className="absolute top-2 right-2 p-1.5 bg-slate-800 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                 title="Copy to clipboard"
+               >
+                 <Icons.CheckSimple className="w-3 h-3 text-slate-300" />
+               </button>
+               <pre>{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}`}</pre>
+             </div>
+
+             <div className="flex justify-end gap-3">
+                <button 
+                  onClick={handleDismissPermissionError}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Dismiss (Work Offline)
+                </button>
+                <a 
+                  href="https://console.firebase.google.com/project/binary-hearts-fddfb/firestore/rules" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  Open Console <Icons.ExternalLink className="w-4 h-4"/>
+                </a>
+             </div>
+          </div>
+        </div>
+      )}
+
       <TutorialModal 
         isOpen={isTutorialOpen}
         onClose={() => setIsTutorialOpen(false)}
@@ -432,8 +482,6 @@ const App: React.FC = () => {
         onClose={() => setIsHistoryOpen(false)}
         onSelect={handleSelectHistory}
         onClear={handleClearHistory}
-        isLoggedIn={!!currentUser}
-        onLogin={() => setShowLogin(true)} 
       />
 
       <GitPanel 
@@ -449,7 +497,6 @@ const App: React.FC = () => {
         }}
       />
 
-      {/* Header */}
       <header className={`flex items-center justify-between px-6 py-4 border-b z-10 shrink-0 transition-colors duration-500 ${
         currentTheme.type === 'light' 
           ? 'bg-white border-slate-200' 
@@ -458,15 +505,9 @@ const App: React.FC = () => {
         <div className="flex items-center space-x-3">
           <div className="relative group">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full blur opacity-60 group-hover:opacity-100 transition duration-200"></div>
-            <img 
-              src="/logo.png" 
-              alt="Logo" 
-              className={`relative w-10 h-10 rounded-full border object-cover ${currentTheme.type === 'light' ? 'bg-slate-100 border-slate-200' : 'bg-slate-900 border-slate-800'}`} 
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-                e.currentTarget.parentElement?.classList.add('hidden');
-              }}
-            />
+            <div className="relative w-10 h-10 rounded-full border bg-slate-800 border-slate-700 flex items-center justify-center">
+               <Icons.Code2 className="w-5 h-5 text-indigo-400" />
+            </div>
           </div>
           <div className="flex flex-col">
             <h1 className={`text-xl font-bold tracking-tight bg-clip-text text-transparent ${currentTheme.type === 'light' ? 'bg-gradient-to-r from-indigo-600 to-purple-600' : 'bg-gradient-to-r from-white to-slate-400'}`}>
@@ -477,7 +518,6 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-4">
-           {/* Language Selector */}
            <div className="relative group flex items-center gap-2">
             <select 
               value={language}
@@ -511,10 +551,8 @@ const App: React.FC = () => {
 
           <div className={`h-6 w-px mx-2 hidden md:block ${currentTheme.type === 'light' ? 'bg-slate-200' : 'bg-slate-800'}`}></div>
 
-          {/* Theme Selector */}
           <ThemeSelector currentTheme={currentTheme} onSelect={handleThemeChange} />
 
-          {/* Controls */}
           <div className={`hidden md:flex items-center rounded-lg p-1 border ${
              currentTheme.type === 'light' ? 'bg-slate-100 border-slate-200' : 'bg-slate-800 border-slate-700'
           }`}>
@@ -558,7 +596,6 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 flex flex-col md:flex-row p-4 gap-4 overflow-hidden relative">
         <section className="flex-1 flex flex-col min-w-0">
           <div className="flex items-center justify-between mb-3 px-1 gap-4">
@@ -572,7 +609,7 @@ const App: React.FC = () => {
                 type="text" 
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                placeholder="Add a note to this snippet (saved on Run)..."
+                placeholder="Snippet Title (Optional - AI will name it if empty)..."
                 className={`w-full border-b text-xs focus:outline-none transition-all pl-7 pr-2 py-1 ${
                   currentTheme.type === 'light' 
                     ? 'bg-slate-100 border-slate-200 hover:border-slate-400 focus:border-indigo-500 text-slate-700 placeholder-slate-400'
@@ -672,8 +709,9 @@ const App: React.FC = () => {
         <div className="flex items-center gap-4">
            <p>Powered by Google Gemini 2.0</p>
            {currentUser && (
-             <button onClick={handleLogout} className="text-red-400 hover:underline">
-               {currentUser.isAnonymous ? 'Exit Guest Mode' : `Sign Out (${currentUser.email || currentUser.displayName})`}
+             <button onClick={handleLogout} className="text-red-400 hover:underline flex items-center gap-1">
+               <Icons.Logout className="w-3 h-3" />
+               Sign Out ({currentUser.displayName || currentUser.email})
              </button>
            )}
         </div>
